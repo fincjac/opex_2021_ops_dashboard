@@ -7,8 +7,6 @@ SELECT
 ,oa.enteredbypartycode Employee
 ,oa.sourcesystem ReasonCode
 ,oa.sourcesystemid SourceSystemID
-,CASE WHEN oa.sourcesystemid in (480,481,2209,2210,3547,4194,5140,5326,5391) then 1
-    WHEN BOT.AUTOMATED = 'AUTO' THEN 1 ELSE 0 END as IsAutomated
 ,1 as LoadBasedActivity
                 ,O.CUSTOMERID  AS CUSTOMERID
                 ,O.CUSTOMERCODE  AS CUSTOMERCODE
@@ -50,8 +48,7 @@ AND oa.entitytypeid = 2
 AND oa.applicationid = 5   ---5 = execution
 AND oa.actiontypeid = 9
 AND oa.actionitemtypeid = 42
-and oa.entereddate >= '2021-05-10'
---and actiontypeid = 7
+AND oa.entereddate >= '2021-05-13'
 AND trim(upper(oa.newvalue)) ='BOOKED'
 
 GROUP BY
@@ -62,25 +59,23 @@ oa.entityid
 ,oa.enteredbypartycode
 ,oa.sourcesystem
 ,oa.sourcesystemID
-,CASE 
-    WHEN oa.sourcesystemid in (480,481,2209,2210,3547,4194,5140,5326,5391) then 1
-    WHEN BOT.AUTOMATED = 'AUTO' THEN 1 ELSE 0 END
 ,O.CUSTOMERID
-                ,O.CUSTOMERCODE
-                ,O.SERVICEOFFERINGDESC
-                ,O.CUSTOMERBRANCHID
-                ,O.CUSTOMERBRANCHCODE
-                ,EMPBRANCH.PARTYID
-                ,EL.BRANCHCODE 
-                ,UPPER(TRIM(EL.PSROLE)) 
-                ,CASE
-                    WHEN oa.sourcesystemid in (480,481,2209,2210,3547,4194,5140,5326,5391) then 1
-                    WHEN (BOT.AUTOMATED = 'AUTO'
-                        OR E.EMPCODE IS NULL
-                        OR E.BRANCHCODE = '7650') THEN 1
-                    ELSE 0
-                END 
-                ,IFF(BOT.AUTOMATED = 'AUTO' ,1 ,0)
- 
-     QUALIFY row_number() over (PARTITION BY LoadNum,Employee,ActivitySmallDateTime 
+,O.CUSTOMERCODE
+,O.SERVICEOFFERINGDESC
+,O.CUSTOMERBRANCHID
+,O.CUSTOMERBRANCHCODE
+,EMPBRANCH.PARTYID
+,EL.BRANCHCODE 
+,UPPER(TRIM(EL.PSROLE)) 
+,CASE
+   WHEN oa.sourcesystemid in (480,481,2209,2210,3547,4194,5140,5326,5391) then 1
+   WHEN (BOT.AUTOMATED = 'AUTO'
+   OR E.EMPCODE IS NULL
+   OR E.BRANCHCODE = '7650') THEN 1
+   ELSE 0 END 
+,IFF(BOT.AUTOMATED = 'AUTO' ,1 ,0)
+ ----grouping to eliminate duplicate execution/action order audit entries that occur within the same minute, but become distinct when queried as a timestamp data type
+QUALIFY row_number() over (PARTITION BY LoadNum,Employee,ActivitySmallDateTime 
                                     ORDER BY LoadNum,Employee,ActivitySmallDateTime ASC) = 1
+                                    
+                                    
