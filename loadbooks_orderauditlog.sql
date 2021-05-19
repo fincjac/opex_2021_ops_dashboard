@@ -1,81 +1,126 @@
-SELECT
- oa.entityid Loadnum
-,'LOADS BOOKED' Activity
-,oa.entereddate ActivityDateTime
-,date_trunc('MINUTE',oa.entereddate) ActivitySmallDateTime
-,1 ActivityCount
-,oa.enteredbypartycode Employee
-,oa.sourcesystem ReasonCode
-,oa.sourcesystemid SourceSystemID
-,1 as LoadBasedActivity
-                ,O.CUSTOMERID  AS CUSTOMERID
-                ,O.CUSTOMERCODE  AS CUSTOMERCODE
-                ,O.SERVICEOFFERINGDESC AS MODE
-                ,O.CUSTOMERBRANCHID AS BRANCHID
-                ,O.CUSTOMERBRANCHCODE AS BRANCHCODE
-                ,EMPBRANCH.PARTYID AS EMPLOYEEBRANCHID
-                ,EL.BRANCHCODE AS EMPLOYEEBRANCHCODE
-                ,UPPER(TRIM(EL.PSROLE)) AS EMPLOYEEPOSITION
+        ---INSERT INTO OPERATIONS_DOMAIN.DBO.TEMP_LOAD_ORDER_ACTIVITY
+        with lb_base
+            (Loadnum, Activity, ActivityDateTime, ActivitySmallDateTime, ActivityCount,Employee,IsAutomated,LoadBasedActivity,SourceAsOfTS) AS
+        (
+            SELECT
+                 oa.entityID Loadnum
+                ,'LOADS BOOKED' Activity
+                ,oa.entereddate ActivityDateTime
+                ,date_trunc('MINUTE',oa.entereddate) as ActivitySmallDateTime
+                ,1 ActivityCount
+                ,oa.enteredbypartycode Employee
                 ,CASE
                     WHEN oa.sourcesystemid in (480,481,2209,2210,3547,4194,5140,5326,5391) then 1
-                    WHEN (BOT.AUTOMATED = 'AUTO'
-                        OR E.EMPCODE IS NULL
-                        OR E.BRANCHCODE = '7650') THEN 1
-                    ELSE 0
-                END AS ISAUTOMATED
-                ,IFF(BOT.AUTOMATED = 'AUTO' ,1 ,0) AS ISBOT
-
-FROM ORION_RAP.OA.ORDERAUDIT as oa
- LEFT OUTER JOIN ORION_RAP.EP.ACTIVITY as A on a.loadnumber = oa.entityID
- LEFT OUTER JOIN OPERATIONS_DOMAIN.DBO.ORDER_CHARACTERISTICS O ON
-                    a.ORDERNUMBER = O.ORDERNUM
-    LEFT OUTER JOIN EXPRESS_RAP.DBO.EMPLOYEES E  ON
-                    Upper(TRIM(oa.enteredbypartycode)) = TRIM(E.EMPCODE)
-                LEFT OUTER JOIN TRUCKLOAD_DOMAIN.DBO.DIM_EMPLOYEE_HISTORY EL ON
-                    TRIM(EL.EMPLOYEECODE) = TRIM(E.EMPCODE)
-                    AND oa.entereddate >= EL.ACTIVESTARTDATETIME
-                    AND oa.entereddate <= EL.ACTIVEENDDATETIME
-                LEFT JOIN MDM_RAP.MDM.PARTY EMPBRANCH ON
-                    TRIM(EL.BRANCHCODE) = EMPBRANCH.PARTYCODE
-                    AND EMPBRANCH.PARTYTYPEID = 1 /*BRANCH*/
-    LEFT OUTER JOIN OPERATIONS_DOMAIN.DBO.OPEX_BOTS BOT
-    ON Upper(TRIM(oa.enteredbypartycode)) = BOT.EmpCode
-
-WHERE 
----oa.entityid IN (348488385,349693769,349955162,356381848,356107724) AND  
-oa.categoryid = 10
-AND oa.entitytypeid = 2
-AND oa.applicationid = 5   ---5 = execution
-AND oa.actiontypeid = 9
-AND oa.actionitemtypeid = 42
-AND oa.entereddate >= '2021-05-13'
-AND trim(upper(oa.newvalue)) ='BOOKED'
-
-GROUP BY
-oa.entityid
-,'LOADS BOOKED'
-,oa.entereddate
-,date_trunc('MINUTE',oa.entereddate)
-,oa.enteredbypartycode
-,oa.sourcesystem
-,oa.sourcesystemID
-,O.CUSTOMERID
-,O.CUSTOMERCODE
-,O.SERVICEOFFERINGDESC
-,O.CUSTOMERBRANCHID
-,O.CUSTOMERBRANCHCODE
-,EMPBRANCH.PARTYID
-,EL.BRANCHCODE 
-,UPPER(TRIM(EL.PSROLE)) 
-,CASE
-   WHEN oa.sourcesystemid in (480,481,2209,2210,3547,4194,5140,5326,5391) then 1
-   WHEN (BOT.AUTOMATED = 'AUTO'
-   OR E.EMPCODE IS NULL
-   OR E.BRANCHCODE = '7650') THEN 1
-   ELSE 0 END 
-,IFF(BOT.AUTOMATED = 'AUTO' ,1 ,0)
- ----grouping to eliminate duplicate execution/action order audit entries that occur within the same minute, but become distinct when queried as a timestamp data type
-QUALIFY row_number() over (PARTITION BY LoadNum,Employee,ActivitySmallDateTime 
+                    ELSE NULL 
+                 END isAutomated
+                ,1 as LoadBasedActivity ----do we call this load based activity if it's originating from order audit log? but its booking at the load level?
+                ,oa.entereddate SourceAsOfTS
+            FROM 
+                ORION_RAP.OA.ORDERAUDIT oa
+            INNER JOIN OPERATIONS_DOMAIN.DBO.STG_SHIPMENT_ACTIVITY_LOADLIST ORDER_CTL
+                ON ORDER_CTL.LOADNUM = oa.entityID
+            WHERE
+                oa.categoryid = 10
+                AND oa.entitytypeid = 2
+                AND oa.applicationid = 5   
+                AND oa.actiontypeid = 9
+                AND oa.actionitemtypeid = 42
+                --AND cast(oa.entereddate as date)
+                AND trim(upper(oa.newvalue)) ='BOOKED'
+          
+            GROUP BY
+                oa.entityID 
+                ,'LOADS BOOKED'
+                ,oa.entereddate 
+                ,date_trunc('MINUTE',oa.entereddate) 
+                ,1 
+                ,oa.enteredbypartycode
+                ,CASE
+                    WHEN oa.sourcesystemid in (480,481,2209,2210,3547,4194,5140,5326,5391) then 1
+                    ELSE NULL 
+                 END 
+,ORDER_CTL.LOADNUM
+            QUALIFY row_number() over (PARTITION BY LoadNum,Employee,ActivitySmallDateTime 
                                     ORDER BY LoadNum,Employee,ActivitySmallDateTime ASC) = 1
-                                    
-                                    
+        )
+        ,TEMP_LOAD_ORDER_ACTIVITY
+            (Loadnum, Activity, ActivityDateTime, ActivityCount,Employee,IsAutomated,LoadBasedActivity,SourceAsOfTS)  AS          
+        (
+          SELECT
+                 Loadnum
+                ,Activity
+                ,ActivityDateTime
+                ,ActivityCount
+                ,Employee
+                ,isAutomated
+                ,loadbasedactivity
+                ,sourceasofts
+          FROM lb_base
+          GROUP BY                 
+                 Loadnum
+                ,Activity
+                ,ActivityDateTime
+                ,ActivityCount
+                ,Employee
+                ,isAutomated
+                ,loadbasedactivity
+                ,sourceasofts 
+
+       )
+--SELECT * FROM TEMP_LOAD_ORDER_ACTIVITY
+select 
+year(ActivityDateTime)
+,count(*) 
+from TEMP_LOAD_ORDER_ACTIVITY group by year(ActivityDateTime)
+
+,
+with LOAD_BOOKED_BOUNCED_DRIVERINFO as
+        (
+            SELECT
+                LoadBooks.LoadNum LoadNum
+                ,LoadBooks.BookedDate BookedDate
+                ,Upper(TRIM(LoadBooks.BookedBy)) BookedBy
+                ,LoadBooks.Bounced Bounced
+                ,LoadBooks.BouncedDate BouncedDate
+                ,Upper(TRIM(LoadBooks.BouncedBy)) BouncedBy
+                ,LoadBooks.bouncedcode BouncedCode
+                ,LoadBooks.DriverInfoDate DriverInfoDate
+                ,Upper(TRIM(LoadBooks.DriverInfoBy)) DriverInfoBy
+                ,1 ActivityCount
+                , GREATEST
+                (
+                    IFNULL(LoadBooks.updateddate, to_timestamp('1970-01-01 00:00:00')),
+                    IFNULL(LoadBooks.entereddate, to_timestamp('1970-01-01 00:00:00')),
+                    IFNULL(LOAD_CTL.SourceAsOfTS, to_timestamp('1970-01-01 00:00:00'))
+                ) as SourceAsOfTS               
+            FROM
+                EXPRESS_RAP.dbo.LoadBooks
+                INNER JOIN OPERATIONS_DOMAIN.DBO.STG_SHIPMENT_ACTIVITY_LOADLIST LOAD_CTL
+                    ON LoadBooks.LoadNum = LOAD_CTL.LOADNUM
+            WHERE
+                (LoadBooks.BookedDate IS NOT NULL OR
+                    (LoadBooks.Bounced  AND LoadBooks.BouncedDate  IS NOT NULL ) OR
+                     LoadBooks.DriverInfoDate IS NOT NULL)
+        )
+       ,prod_lb as
+       (
+        SELECT DISTINCT
+            LOAD_BOOKED_BOUNCED_DRIVERINFO.LoadNum ,
+            'LOADS BOOKED' Activity,
+            LOAD_BOOKED_BOUNCED_DRIVERINFO.BookedDate ActivityDateTime,
+            LOAD_BOOKED_BOUNCED_DRIVERINFO.ActivityCount ,
+            CASE WHEN LOAD_BOOKED_BOUNCED_DRIVERINFO.BookedBy = 'VERIFY' then Upper(TRIM(Loadmatch.CarrierRep)) else LOAD_BOOKED_BOUNCED_DRIVERINFO.BookedBy end BookedBy ,
+            NULL ReasonCode ,
+            NULL IsAutomated ,
+            TRUE LoadBasedActivity ,
+            LOAD_BOOKED_BOUNCED_DRIVERINFO.SourceAsOfTS
+        FROM
+            LOAD_BOOKED_BOUNCED_DRIVERINFO
+            INNER JOIN EXPRESS_RAP.dbo.Loadmatch ON
+                Loadmatch.LoadNum = LOAD_BOOKED_BOUNCED_DRIVERINFO.LoadNum
+        WHERE
+            LOAD_BOOKED_BOUNCED_DRIVERINFO.BookedDate IS NOT NULL
+ )                  
+                     --110970330 - 30 sec
+                     --38.5k - 6 min
+   select year(bookeddate),count(*) from prod_lb group by year(bookeddate)
